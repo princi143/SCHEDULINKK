@@ -49,6 +49,17 @@ python app.py            # http://localhost:5000
 No setup needed: without `DATABASE_URL` it stores data in a local SQLite file (`schedulink.db`).
 Browsers only share location on `https://` or `localhost`.
 
+## Deploy on Vercel
+
+1. vercel.com/new → import this repo → **Deploy** (Flask is detected automatically; no settings to change).
+2. In the project: **Storage → Create Database → Neon** (free) and connect it to the project.
+   That sets `DATABASE_URL` / `POSTGRES_URL` for you.
+3. **Deployments → ⋯ → Redeploy** so the app picks up the database.
+
+A database is required on Vercel: its disk is read-only, so without one the app falls back to a temporary
+file and loses data between requests. `SECRET_KEY` is optional there (a stable key is derived from the
+database URL) and secure cookies are on by default.
+
 ## Deploy on Render
 
 1. Push this repo to GitHub.
@@ -85,8 +96,7 @@ start `gunicorn app:app --workers 2 --threads 4 --bind 0.0.0.0:$PORT`, then add 
 app.py              Flask routes and API
 db.py               Small PostgreSQL / SQLite layer and schema
 templates/          index, customer, professional, admin
-static/css, js      Styles and page scripts (no build step)
-static/vendor       Leaflet (bundled)   static/fonts  bundled typefaces
+public/static/      CSS, page scripts, bundled Leaflet and fonts (no build step)
 legacy/             The original prototype files, kept for reference
 ```
 

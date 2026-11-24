@@ -3,6 +3,7 @@
 Customers find nearby professionals and book a time; businesses run their day:
 queue, schedule, team, and demand insights.
 """
+import hashlib
 import math
 import os
 import random
@@ -18,7 +19,10 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import db
 
-app = Flask(__name__)
+# Static files live in public/static: Flask serves them at /static locally,
+# and Vercel serves the public/ folder straight from its CDN at the same URLs.
+app = Flask(__name__, static_folder="public/static", static_url_path="/static")
+ON_VERCEL = bool(os.environ.get("VERCEL"))
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 
@@ -28,6 +32,10 @@ def _secret_key():
     key = os.environ.get("SECRET_KEY")
     if key:
         return key
+    if db.DATABASE_URL:
+        # Hosts with a read-only disk (Vercel): derive a stable key from the
+        # database URL, which is itself a secret shared by every instance.
+        return hashlib.sha256(("schedulink-session:" + db.DATABASE_URL).encode()).hexdigest()
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".secret_key")
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -35,6 +43,8 @@ def _secret_key():
             f.write(secrets.token_hex(32))
     except FileExistsError:
         pass
+    except OSError:
+        return secrets.token_hex(32)
     with open(path) as f:
         return f.read().strip()
 
@@ -43,7 +53,7 @@ app.secret_key = _secret_key()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
+    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "1" if ON_VERCEL else "0") == "1",
     PERMANENT_SESSION_LIFETIME=timedelta(days=30),
     JSON_SORT_KEYS=False,
 )

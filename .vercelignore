@@ -1,0 +1,5 @@
+legacy/
+render.yaml
+Procfile
+*.db
+.secret_key

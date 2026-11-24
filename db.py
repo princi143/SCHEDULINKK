@@ -10,14 +10,15 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+# DATABASE_URL is the standard name; POSTGRES_URL is what Vercel's database
+# integrations (Neon, Supabase) set automatically.
+DATABASE_URL = (os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or "").strip()
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
 
 IS_PG = DATABASE_URL.startswith("postgresql://")
-SQLITE_PATH = os.environ.get(
-    "SQLITE_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedulink.db")
-)
+_default_dir = "/tmp" if os.environ.get("VERCEL") else os.path.dirname(os.path.abspath(__file__))
+SQLITE_PATH = os.environ.get("SQLITE_PATH", os.path.join(_default_dir, "schedulink.db"))
 
 _pool = None
 _local = threading.local()
@@ -27,7 +28,7 @@ if IS_PG:
     import psycopg2.extras
     import psycopg2.pool
 
-    _pool = psycopg2.pool.ThreadedConnectionPool(1, int(os.environ.get("DB_POOL_MAX", "8")), dsn=DATABASE_URL)
+    _pool = psycopg2.pool.ThreadedConnectionPool(1, int(os.environ.get("DB_POOL_MAX", "5")), dsn=DATABASE_URL)
     IntegrityError = psycopg2.IntegrityError
 else:
     IntegrityError = sqlite3.IntegrityError
@@ -44,19 +45,37 @@ def _sqlite_conn():
     return conn
 
 
+def _pg_conn():
+    """A pooled connection that is known to be alive. Serverless hosts freeze
+    idle instances, so a pooled connection may have been closed by the server."""
+    for _ in range(3):
+        conn = _pool.getconn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            conn.rollback()
+            return conn
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            _pool.putconn(conn, close=True)
+    return _pool.getconn()
+
+
 @contextmanager
 def _cursor():
     if IS_PG:
-        conn = _pool.getconn()
+        conn = _pg_conn()
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             yield cur
             conn.commit()
         except Exception:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             raise
         finally:
-            _pool.putconn(conn)
+            _pool.putconn(conn, close=bool(conn.closed))
     else:
         conn = _sqlite_conn()
         cur = conn.cursor()
