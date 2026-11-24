@@ -1187,4 +1187,5 @@ def not_found(_):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=int(os.environ.get("PORT", "5000")))
+    # No auto-reloader: it exits immediately on some Windows setups.
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1", use_reloader=False, port=int(os.environ.get("PORT", "5000")))
