@@ -32,16 +32,27 @@
     <div class="locate-inner">
       <p class="eyebrow">Live availability, not a phone tag</p>
       <h1>See who can take you <em>today</em>, near you.</h1>
-      <p class="lede">Turn on location and Schedulink lists the clinics, salons and service pros around you — with real open slots you can book in two taps.</p>
+      <p class="lede">Tell us who you need and where. Schedulink lists the doctors, salons, lawyers, vets and other pros there — and shows real open slots for the ones you can book in two taps.</p>
+      <form class="finder-form" id="areaForm">
+        <div class="ff-field">
+          <label for="catSelect">Who do you need?</label>
+          <select class="input" id="catSelect">
+            <option value="all">Any professional</option>
+            {% for k, v in categories.items() %}{% if k != 'other' %}<option value="{{ k }}">{{ v }}</option>{% endif %}{% endfor %}
+          </select>
+        </div>
+        <div class="ff-field grow">
+          <label for="areaInput">Where?</label>
+          <input class="input" id="areaInput" placeholder="City, area or PIN code — e.g. Bangalore, Indiranagar, 560038" autocomplete="off">
+        </div>
+        <button class="btn lg amber" type="submit" id="areaSubmit">Find</button>
+      </form>
       <div class="locate-actions">
-        <button class="btn lg amber" id="useLocation" type="button">
+        <span class="or">or</span>
+        <button class="btn ghost on-dark" id="useLocation" type="button">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
           Use my location
         </button>
-        <form class="area-form" id="areaForm">
-          <input class="input" id="areaInput" placeholder="or type an area or PIN code" autocomplete="postal-code" aria-label="Area or PIN code">
-          <button class="btn ghost on-dark" type="submit">Search</button>
-        </form>
       </div>
       <p class="form-error on-dark" id="locateError" role="alert"></p>
       <p class="privacy">Your location stays in this browser. It's only used to sort what's nearby.</p>

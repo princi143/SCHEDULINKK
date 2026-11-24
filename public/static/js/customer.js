@@ -83,54 +83,81 @@
     btn.disabled = true; btn.lastChild.textContent = " Finding you…";
     try {
       const p = await SL.locate();
-      setLocation(p.lat, p.lng, null);
+      S.cat = $("#catSelect").value;
+      setLocation(p.lat, p.lng, null, 0);
     } catch (e) { $("#locateError").textContent = e.message; }
     btn.disabled = false; btn.lastChild.textContent = " Use my location";
   });
   $("#areaForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const text = $("#areaInput").value.trim();
-    if (!text) return;
     $("#locateError").textContent = "";
-    try { const g = await SL.geocode(text); setLocation(g.lat, g.lng, g.label); }
-    catch (err) { $("#locateError").textContent = err.message || "Couldn't look that up. Try again."; }
+    if (!text) { $("#locateError").textContent = "Type a city, area or PIN code — or use your location."; return; }
+    const btn = $("#areaSubmit");
+    btn.disabled = true; btn.textContent = "Finding…";
+    try {
+      const g = await SL.geocode(text);
+      // A whole city or district: search wide. An area or PIN code: search around it.
+      const wideKm = g.spanKm > 8 ? Math.max(6, Math.min(18, g.spanKm / 2)) : 0;
+      S.cat = $("#catSelect").value;
+      setLocation(g.lat, g.lng, g.label, wideKm);
+    } catch (err) { $("#locateError").textContent = err.message || "Couldn't look that up. Try again."; }
+    btn.disabled = false; btn.textContent = "Find";
   });
   $("#locPill").addEventListener("click", () => {
     $("#finder").hidden = true; $("#locatePanel").hidden = false; $("#locPill").hidden = true;
+    $("#catSelect").value = S.cat in CATS ? S.cat : "all";
     localStorage.removeItem("sl_loc");
   });
 
-  async function setLocation(lat, lng, label) {
-    S.loc = { lat, lng, label: label || "your location" };
+  async function setLocation(lat, lng, label, wideKm = 0) {
+    S.loc = { lat, lng, label: label || "your location", wideKm };
     $("#locatePanel").hidden = true; $("#finder").hidden = false; $("#locPill").hidden = false;
-    $("#locLabel").textContent = "Near " + S.loc.label;
-    try { localStorage.setItem("sl_loc", JSON.stringify(S.loc)); } catch (e) { /* ignore */ }
+    const showLabel = () => { $("#locLabel").textContent = (S.loc.wideKm ? "In " : "Near ") + S.loc.label; };
+    showLabel();
+    const save = () => { try { localStorage.setItem("sl_loc", JSON.stringify(S.loc)); } catch (e) { /* ignore */ } };
+    save();
     initMap();
     S.places = null; S.placesError = null;
     renderResults();
     loadBusinesses();
     loadPlaces();
-    if (!label) SL.reverseGeocode(lat, lng).then((r) => {
-      S.loc.label = r.label; $("#locLabel").textContent = "Near " + r.label;
-      try { localStorage.setItem("sl_loc", JSON.stringify(S.loc)); } catch (e) { /* ignore */ }
-    });
+    if (!label) SL.reverseGeocode(lat, lng).then((r) => { S.loc.label = r.label; showLabel(); save(); });
   }
 
   async function loadBusinesses() {
     try {
-      const d = await api(`/api/businesses?lat=${S.loc.lat}&lng=${S.loc.lng}&radius=25`);
+      const d = await api(`/api/businesses?lat=${S.loc.lat}&lng=${S.loc.lng}&radius=${Math.max(25, S.loc.wideKm || 0)}`);
       S.businesses = d.businesses.filter((b) => b.distance_km != null);
       S.today = d.today;
     } catch (e) { toast(e.message, true); }
     renderResults();
   }
+  /** Real places from OpenStreetMap.
+      Around a point: everything within walking/short-drive distance, filtered locally.
+      Across a city: one profession at a time, over the whole city. */
   async function loadPlaces() {
+    const ticket = (S.placesTicket = (S.placesTicket || 0) + 1);
+    const { lat, lng, wideKm } = S.loc;
+    let places, error = null;
     try {
-      let places = await SL.nearbyPlaces(S.loc.lat, S.loc.lng, 2500);
-      if (places.length < 8) places = await SL.nearbyPlaces(S.loc.lat, S.loc.lng, 7000);
-      S.places = places;
-    } catch (e) { S.places = []; S.placesError = true; }
+      if (wideKm && S.cat !== "all") places = await SL.nearbyPlaces(lat, lng, wideKm * 1000, S.cat);
+      else if (wideKm) places = await SL.nearbyPlaces(lat, lng, 4000);
+      else {
+        places = await SL.nearbyPlaces(lat, lng, 2500);
+        if (places.length < 8) places = await SL.nearbyPlaces(lat, lng, 7000);
+        // Asked for one profession and it's rare close by: look further out for just that one.
+        if (S.cat !== "all" && places.filter((p) => p.category === S.cat).length < 5) {
+          const more = await SL.nearbyPlaces(lat, lng, 12000, S.cat).catch(() => []);
+          const have = new Set(places.map((p) => p.osm_id));
+          places = places.concat(more.filter((p) => !have.has(p.osm_id))).sort((x, y) => x.distance_km - y.distance_km);
+        }
+      }
+    } catch (e) { places = []; error = true; }
+    if (ticket !== S.placesTicket) return;   // a newer search replaced this one
+    S.places = places; S.placesError = error;
     renderResults();
+    if (S.map) S.map.setView([lat, lng], wideKm && S.cat !== "all" ? 12 : wideKm ? 14 : 15);
   }
 
   // ------------------------------------------------------------ map
@@ -180,13 +207,14 @@
     const t = time12(b.next_slot.time);
     return `<span class="next-slot">Next free <b>${dayLabel(b.next_slot.date, S.today)} ${t.text}</b></span>`;
   }
+  const SHOWN = 150;
   function renderResults() {
     if (!S.loc) return;
     const claimed = new Set(S.businesses.map((b) => b.osm_id).filter(Boolean));
     const allUnlisted = (S.places || []).filter((p) => !claimed.has(p.osm_id));
     const present = new Set([...S.businesses, ...allUnlisted].map((x) => x.category));
-    $("#catChips").innerHTML = [`<button class="chip ${S.cat === "all" ? "on" : ""}" data-cat="all" type="button">All nearby</button>`]
-      .concat(Object.keys(CATS).filter((c) => present.has(c)).map((c) => `<button class="chip ${S.cat === c ? "on" : ""}" data-cat="${c}" type="button">${CAT_ICON[c]} ${esc(CATS[c])}</button>`)).join("");
+    $("#catChips").innerHTML = [`<button class="chip ${S.cat === "all" ? "on" : ""}" data-cat="all" type="button">${S.loc.wideKm ? "All" : "All nearby"}</button>`]
+      .concat(Object.keys(CATS).filter((c) => (S.loc.wideKm ? c !== "other" : present.has(c)) || c === S.cat).sort((x, y) => (y === S.cat) - (x === S.cat)).map((c) => `<button class="chip ${S.cat === c ? "on" : ""}" data-cat="${c}" type="button">${CAT_ICON[c]} ${esc(CATS[c])}</button>`)).join("");
 
     const live = S.businesses.filter(matches);
     const unlisted = allUnlisted.filter(matches);
@@ -207,13 +235,15 @@
       html += `<div class="card small" style="margin-bottom:10px"><b>No one near you takes Schedulink bookings ${S.cat === "all" && !S.q ? "yet" : "for this filter"}.</b><br><span class="muted">Ask a place below for online booking — each request is shown to the business when it joins, and you're alerted the moment it's bookable.</span></div>`;
     }
 
-    html += `<div class="group-head"><h2>Also near you</h2><span>${S.places ? unlisted.length + " places" : ""}</span></div>`;
+    const cityName = S.loc.label.split(",")[0];
+    html += `<div class="group-head"><h2>${S.loc.wideKm ? (S.cat === "all" ? "Central " : (CATS[S.cat] || "Places") + " in ") + esc(cityName) : "Also near you"}</h2><span>${S.places ? unlisted.length + " places" : ""}</span></div>`;
+    if (S.loc.wideKm && S.cat === "all") html += `<div class="wide-note">Showing the centre of ${esc(cityName)}. Pick a profession above to search the whole city.</div>`;
     if (S.places === null) html += `<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>`;
     else if (S.placesError) html += `<div class="empty"><h3>Map data didn't load</h3><p>OpenStreetMap's servers are busy. Your bookable results above are unaffected.</p><button class="btn ghost" id="retryPlaces" type="button">Try again</button></div>`;
-    else if (!unlisted.length) html += `<div class="empty"><p>No mapped places match here. Try another category or a wider area.</p></div>`;
+    else if (!unlisted.length) html += `<div class="empty"><p>No mapped ${S.cat !== "all" ? esc((CATS[S.cat] || "places").toLowerCase()) : "places"} found here on OpenStreetMap. Try another profession or a nearby area.</p></div>`;
     else {
       html += `<p class="source-note">Real places from OpenStreetMap. They haven't joined Schedulink, so times aren't shown.</p>`;
-      html += unlisted.slice(0, 80).map((p) => {
+      html += unlisted.slice(0, SHOWN).map((p) => {
         const asked = S.leads.has(p.osm_id);
         return `
         <div class="place unlisted" data-key="p-${esc(p.osm_id)}" data-place="${esc(p.osm_id)}">
@@ -222,18 +252,24 @@
             <div style="min-width:0"><h3>${esc(p.name)}</h3><div class="sub">${esc(CATS[p.category])}${p.address ? " · " + esc(p.address) : ""}</div></div>
             <div class="dist">${km(p.distance_km)}</div>
           </div>
+          ${p.hours || p.phone || p.website ? `<div class="extra">${p.hours ? `<span>🕑 ${esc(p.hours)}</span>` : ""}${p.phone ? `<span>📞 ${esc(p.phone.split(";")[0])}</span>` : ""}${/^https?:\/\//.test(p.website) ? `<span>🌐 <a target="_blank" rel="noopener nofollow" href="${esc(p.website)}">${esc(p.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "").slice(0, 40))}</a></span>` : ""}</div>` : ""}
           <div class="bottom">
             <button class="btn sm ${asked ? "ghost" : "soft"}" data-ask="${esc(p.osm_id)}" type="button" ${asked ? "disabled" : ""}>${asked ? "Requested ✓" : "Ask for online booking"}</button>
             ${p.phone ? `<a class="btn sm ghost" href="tel:${esc(p.phone.split(";")[0])}">Call</a>` : ""}
             <a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}">Directions</a>
+            <a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name + " " + (p.address || cityName))}">Reviews on Google</a>
           </div>
         </div>`;
       }).join("");
     }
+    if (unlisted.length > SHOWN) html += `<p class="source-note" style="text-align:center">Showing the ${SHOWN} closest of ${unlisted.length}. Search a smaller area or type a name to narrow down.</p>`;
     $("#results").innerHTML = html;
-    if (S.map) drawMarkers(live, unlisted.slice(0, 80));
+    if (S.map) drawMarkers(live, unlisted.slice(0, SHOWN));
   }
-  $("#catChips").addEventListener("click", (e) => { const c = e.target.closest("[data-cat]"); if (c) { S.cat = c.dataset.cat; renderResults(); } });
+  $("#catChips").addEventListener("click", (e) => { const c = e.target.closest("[data-cat]"); if (!c) return;
+    S.cat = c.dataset.cat;
+    if (S.loc.wideKm) { S.places = null; S.placesError = null; renderResults(); loadPlaces(); } else renderResults();
+  });
   $("#search").addEventListener("input", (e) => { S.q = e.target.value.trim().toLowerCase(); renderResults(); });
   $("#results").addEventListener("click", (e) => {
     if (e.target.id === "retryPlaces") { S.places = null; S.placesError = null; renderResults(); loadPlaces(); return; }
@@ -493,7 +529,7 @@
     const params = new URLSearchParams(location.search);
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem("sl_loc") || "null"); } catch (e) { /* ignore */ }
-    if (saved && saved.lat != null) setLocation(saved.lat, saved.lng, saved.label);
+    if (saved && saved.lat != null) setLocation(saved.lat, saved.lng, saved.label, saved.wideKm || 0);
     if (params.get("view") === "bookings") show("bookings");
     if (params.get("b")) openBusiness(+params.get("b"));
     setInterval(() => { if (S.me && !document.hidden) api("/api/me").then((m) => SL.setBadge(m.unread)).catch(() => {}); }, 30000);

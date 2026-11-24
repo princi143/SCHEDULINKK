@@ -100,15 +100,23 @@ const SL = (() => {
     if (t.shop === "car_repair" || t.shop === "motorcycle_repair") return "repair";
     return "other";
   }
-  function overpassQuery(lat, lng, r) {
+  // OpenStreetMap tags for each profession. One profession can be searched across a whole city.
+  const OSM_TAGS = {
+    doctor: ['[amenity~"^(doctors|clinic|hospital)$"]', '[healthcare~"^(doctor|clinic|hospital)$"]'],
+    dentist: ['[amenity=dentist]', '[healthcare=dentist]'],
+    salon: ['[shop~"^(hairdresser|beauty)$"]'],
+    spa: ['[shop=massage]', '[leisure=spa]'],
+    vet: ['[amenity=veterinary]'],
+    fitness: ['[leisure=fitness_centre]'],
+    lab: ['[healthcare~"^(laboratory|physiotherapist)$"]'],
+    legal: ['[office=lawyer]'],
+    finance: ['[office~"^(accountant|tax_advisor)$"]'],
+    repair: ['[shop~"^(car_repair|motorcycle_repair)$"]'],
+  };
+  function overpassQuery(lat, lng, r, category) {
     const a = `(around:${Math.round(r)},${lat},${lng})`;
-    return `[out:json][timeout:25];(` +
-      `nwr${a}[name][amenity~"^(doctors|clinic|dentist|veterinary|hospital)$"];` +
-      `nwr${a}[name][shop~"^(hairdresser|beauty|massage|car_repair|motorcycle_repair)$"];` +
-      `nwr${a}[name][leisure~"^(fitness_centre|spa)$"];` +
-      `nwr${a}[name][office~"^(lawyer|accountant|tax_advisor)$"];` +
-      `nwr${a}[name][healthcare~"^(laboratory|physiotherapist|clinic|doctor)$"];` +
-      `);out center tags 220;`;
+    const tags = OSM_TAGS[category] || [].concat(...Object.values(OSM_TAGS));
+    return `[out:json][timeout:25];(` + tags.map((t) => `nwr${a}[name]${t};`).join("") + `);out center tags ${category ? 600 : 300};`;
   }
   async function overpass(query) {
     let lastErr;
@@ -125,13 +133,13 @@ const SL = (() => {
     throw lastErr || new Error("Map data is unavailable");
   }
   /** Real businesses around a point. Cached for 6 hours per ~100 m cell. */
-  async function nearbyPlaces(lat, lng, radiusM = 2500) {
-    const key = `sl_places_${lat.toFixed(3)}_${lng.toFixed(3)}_${radiusM}`;
+  async function nearbyPlaces(lat, lng, radiusM = 2500, category = "") {
+    const key = `sl_places2_${lat.toFixed(3)}_${lng.toFixed(3)}_${radiusM}_${category}`;
     try {
       const hit = JSON.parse(localStorage.getItem(key) || "null");
       if (hit && Date.now() - hit.at < 6 * 3600 * 1000) return hit.places;
     } catch (e) { /* storage unavailable */ }
-    const data = await overpass(overpassQuery(lat, lng, radiusM));
+    const data = await overpass(overpassQuery(lat, lng, radiusM, category));
     const seen = new Set();
     const places = [];
     for (const el of data.elements || []) {
@@ -144,7 +152,8 @@ const SL = (() => {
       const addr = [[t["addr:housenumber"], t["addr:street"]].filter(Boolean).join(" "), t["addr:suburb"] || t["addr:neighbourhood"], t["addr:city"]].filter(Boolean).join(", ");
       places.push({
         osm_id: `${el.type}/${el.id}`, name: t.name, category: osmCategory(t), lat: plat, lng: plng,
-        address: addr, phone: t.phone || t["contact:phone"] || "", hours: t.opening_hours || "",
+        address: addr, phone: t.phone || t["contact:phone"] || t["contact:mobile"] || "", hours: t.opening_hours || "",
+        website: t.website || t["contact:website"] || "",
         distance_km: distanceKm(lat, lng, plat, plng),
       });
     }
@@ -152,11 +161,15 @@ const SL = (() => {
     try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), places })); } catch (e) { /* quota */ }
     return places;
   }
+  /** Look up an area, PIN code or city. `spanKm` says how big the matched place is
+      (a city is tens of km across, a PIN code a few). */
   async function geocode(text) {
     const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=in&q=${encodeURIComponent(text)}`, { headers: { "Accept-Language": "en" } });
     const hits = await res.json();
     if (!hits.length) throw new Error(`Couldn't find “${text}”. Try a nearby landmark or a 6-digit PIN code.`);
-    return { lat: +hits[0].lat, lng: +hits[0].lon, label: hits[0].display_name.split(",").slice(0, 2).join(",") };
+    const h = hits[0], bb = (h.boundingbox || []).map(Number);
+    const spanKm = bb.length === 4 ? distanceKm(bb[0], bb[2], bb[1], bb[3]) : 0;
+    return { lat: +h.lat, lng: +h.lon, label: h.display_name.split(",").slice(0, 2).join(","), spanKm };
   }
   async function reverseGeocode(lat, lng) {
     try {

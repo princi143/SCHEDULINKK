@@ -15,10 +15,15 @@
 .locate h1 em{font-style:normal;color:#f0c98a;position:relative;white-space:nowrap}
 .locate h1 em::after{content:"";position:absolute;left:0;right:0;bottom:.04em;height:.09em;background:var(--amber);border-radius:4px;opacity:.7}
 .lede{font-size:18px;color:rgba(255,255,255,.82);margin:20px 0 30px;max-width:560px}
-.locate-actions{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
-.area-form{display:flex;gap:8px;flex:1;min-width:260px;max-width:400px}
-.area-form .input{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.28);color:#fff;border-radius:999px;padding-left:18px}
-.area-form .input::placeholder{color:rgba(255,255,255,.6)}
+.finder-form{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;background:#fff;border-radius:20px;padding:14px;box-shadow:var(--shadow-lg);color:var(--ink)}
+.ff-field{display:flex;flex-direction:column;gap:5px;min-width:190px;flex:0 1 auto}
+.ff-field.grow{flex:1;min-width:230px}
+.ff-field label{font-size:12.5px;font-weight:700;color:var(--ink-2);padding-left:4px}
+.finder-form .btn{padding-left:30px;padding-right:30px}
+.locate-actions{display:flex;gap:12px;align-items:center;margin-top:16px}
+.locate-actions .or{color:rgba(255,255,255,.6);font-size:14px}
+.wide-note{background:var(--amber-soft);border:1px solid #ecd7b1;border-radius:12px;padding:10px 12px;font-size:13.5px;color:var(--amber-deep);margin:4px 0 10px}
+.place .extra{font-size:13px;color:var(--ink-2);margin-top:8px;display:grid;gap:2px}
 .form-error.on-dark{color:#ffc9bd;margin-top:14px}
 .privacy{font-size:13px;color:rgba(255,255,255,.6);margin-top:6px}
 
@@ -71,6 +76,8 @@
 .success .ticket{text-align:left;margin:20px 0}
 
 @media (max-width:860px){
+  .ff-field,.ff-field.grow{flex:1 1 100%;min-width:0}
+  .finder-form .btn{width:100%}
   .topbar{padding:8px 12px;gap:8px;flex-wrap:wrap}
   .brand-word{display:none}
   .tabs button{padding:8px 11px;font-size:13.5px}
